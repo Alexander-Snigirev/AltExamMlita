@@ -4,7 +4,7 @@ from typing import List, Optional
 class KolmogorovUspenskyMachine:
     """
     Специализированная машина для задачи из статьи Григорьева.
-    Реализует построение деревьев Γ(L) и обход по маршрутам.
+    Реализует построение равномерных деревьев Γ(L) с XOR-логикой меток.
     """
     
     def __init__(self):
@@ -30,31 +30,61 @@ class KolmogorovUspenskyMachine:
     def _collect_leaves(self, node: MemoryCell) -> List[MemoryCell]:
         """
         Вспомогательный метод: найти все листья в поддереве.
-        Лист — это узел, у которого нет исходящих ссылок '0' и '1'.
         """
         leaves = []
         if not node.pointers:
             return [node]
             
         is_leaf = True
-        for label, child in node.pointers.items():
-            if child:
+
+        for label in ['0', '1']:
+            if label in node.pointers and node.pointers[label]:
                 is_leaf = False
-                leaves.extend(self._collect_leaves(child))
+                leaves.extend(self._collect_leaves(node.pointers[label]))
         
         if is_leaf:
             return [node]
         return leaves
 
+    def copy_subtree(self, node: MemoryCell, xor_mask: int = 0, prefix: str = '') -> MemoryCell:
+        """
+        Рекурсивное копирование поддерева.
+        ВАЖНО: Применяет xor_mask к меткам (label) копируемых узлов.
+        """
+        if node is None:
+            return None
+
+        content = node.content.copy() if node.content else {}
+        
+        if 'label' in content:
+            original_label = content['label']
+            content['label'] = original_label ^ xor_mask
+            
+        # Обновляем путь для отладки (не влияет на логику машины)
+        if 'path' in content:
+
+            pass 
+
+        new_node = self.memory.allocate(content=content)
+        self.stats['nodes_created'] += 1
+        
+        for label, child in node.pointers.items():
+            if child:
+                new_child = self.copy_subtree(child, xor_mask=xor_mask, prefix=prefix + label)
+                self.memory.add_pointer(new_node.address, label, new_child.address)
+                self.stats['edges_created'] += 1
+                
+        return new_node
+
     def build_tree_Gamma(self, L: int):
         """
         Построить дерево Γ(L) глубины 2^L.
-        Удвоение глубины методом наращивания листьев.
+        Реализует индуктивный переход с XOR-коррекцией меток.
         """
         print(f"Начинаем построение Γ({L}) (целевая глубина {2**L})...")
         
         if L == 0:
-            # База: Γ(0) глубины 1
+
             root = self.memory.allocate(content={'label': 0, 'L': 0, 'path': ''})
             left = self.memory.allocate(content={'label': 0, 'type': 'leaf', 'path': '0'})
             right = self.memory.allocate(content={'label': 1, 'type': 'leaf', 'path': '1'})
@@ -68,28 +98,33 @@ class KolmogorovUspenskyMachine:
             self.stats['edges_created'] += 2
             
         else:
-           
-            base_root = self.copy_subtree(self.trees[L-1], prefix='')
+            prev_L = L - 1
+            if prev_L not in self.trees:
+                raise ValueError(f"Предыдущее дерево Γ({prev_L}) не найдено!")
+
+            base_root = self.copy_subtree(self.trees[prev_L], xor_mask=0, prefix='')
 
             leaves = self._collect_leaves(base_root)
-            print(f"  В Γ({L-1}) найдено {len(leaves)} листьев для расширения")
+            print(f"  В базе Γ({L}) найдено {len(leaves)} листьев для расширения")
 
-            
-            prev_tree_source = self.trees[L-1]
+            template_tree = self.trees[prev_L]
             
             for leaf in leaves:
-                # В статье здесь применяется XOR к меткам, но пока просто копируем структуру
-                # prefix для отладки путей
-                extension_root = self.copy_subtree(prev_tree_source, prefix=leaf.content.get('path', ''))
+
+                leaf_val = leaf.content.get('label', 0)
+            
+                extension_root = self.copy_subtree(template_tree, 
+                                                   xor_mask=leaf_val, 
+                                                   prefix=leaf.content.get('path', ''))
 
                 for label, child_node in extension_root.pointers.items():
                     self.memory.add_pointer(leaf.address, label, child_node.address)
 
+                
                 if leaf.content:
                     leaf.content['type'] = 'node'
-
-                    leaf.content['label'] = leaf.content.get('label', 0) ^ extension_root.content.get('label', 0)
-
+                    
+                    
             self.trees[L] = base_root
             self.root = base_root
             self.current_L = L
@@ -98,284 +133,137 @@ class KolmogorovUspenskyMachine:
 
         return self.trees[L]
 
-    def copy_subtree(self, node: MemoryCell, prefix: str = '') -> MemoryCell:
+    def visualize_tree(self, L: int):
         """
-        Рекурсивное копирование поддерева.
+        Визуализирует дерево в консоли с использованием псевдографики.
+        Показывает структуру, ребра (0/1) и метки узлов [Val].
         """
-        if node is None:
-            return None
+        if L not in self.trees:
+            print(f"Дерево Γ({L}) не построено.")
+            return
+
+        root = self.trees[L]
+        print(f"\n=== Визуализация Γ({L}), глубина {2**L} ===")
+        print(f"Легенда: ── ребро [Метка узла]")
+        
+        def print_node(node, prefix="", is_last=True, edge_label=None):
+            if node is None:
+                return
+
+           
+            connector = "└── " if is_last else "├── "
+            if edge_label is None:
+                # Корень
+                display_str = ""
+            else:
+            
+                display_str = f"{prefix}{connector}{edge_label} → "
 
        
-        content = node.content.copy() if node.content else {}
-        
-        if 'path' in content:
+            label = node.content.get('label', '?')
+            kind = "leaf" if not node.pointers else "node"
+            color_reset = "\033[0m"
+            color_leaf = "\033[92m" if kind == 'leaf' else ""
             
-            pass
-            
-        new_node = self.memory.allocate(content=content)
-        self.stats['nodes_created'] += 1
+            print(f"{display_str}{color_leaf}[{label}]{color_reset}")
+
         
-        for label, child in node.pointers.items():
-            if child:
-                new_child = self.copy_subtree(child, prefix + label)
-                self.memory.add_pointer(new_node.address, label, new_child.address)
-                self.stats['edges_created'] += 1
-                
-        return new_node
-    
+            if edge_label is None:
+                child_prefix = ""
+            else:
+                child_prefix = prefix + ("    " if is_last else "│   ")
+
+
+            children = []
+            if '0' in node.pointers and node.pointers['0']:
+                children.append(('0', node.pointers['0']))
+            if '1' in node.pointers and node.pointers['1']:
+                children.append(('1', node.pointers['1']))
+
+
+            for i, (e_lbl, child) in enumerate(children):
+                is_last_child = (i == len(children) - 1)
+                print_node(child, child_prefix, is_last_child, e_lbl)
+
+        print_node(root)
+        print("="*40 + "\n")
+
+
     def receive_bit(self, bit: int):
-        """
-        Принять один входной бит.
-        Возвращает пару (output_bit, status).
-        """
         self.input_buffer.append(bit)
         t = len(self.input_buffer)
-        
         mode = self.determine_mode(t)
-        
         if mode == 'output':
-            # Режим вывода: используем текущее дерево
             return self.process_output_mode(t), 'output'
         elif mode == 'construction':
-            # Режим построения: строим следующее дерево
             self.process_construction_mode(t)
             return 1, 'construction'
         else:
             return 0, 'idle'
-    
+
     def determine_mode(self, t: int) -> str:
 
-        sum_T_prev = sum(self.T[:self.current_L]) if self.current_L > 0 else 0
-        sum_T_curr = sum(self.T[:self.current_L + 1])
-        
-        start_output = sum_T_prev + 2**(self.current_L - 1) if self.current_L > 0 else 0
-        end_output = sum_T_prev + 2**self.current_L
-        start_construction = end_output
-        end_construction = sum_T_curr + 2**self.current_L
-        
-        if start_output <= t < end_output:
-            return 'output'
-        elif start_construction <= t < end_construction:
-            return 'construction'
-        else:
-            self.current_L += 1
-            return self.determine_mode(t)
-        
-
-    def visualize_tree(self, L: int, max_depth: int = 4):
-        """
-        Визуализировать дерево Γ(L) в ASCII.
-        Узлы: [метка]
-        Рёбра: 0\ (влево-вниз), 1/ (вправо-вниз)
-        """
-        if L not in self.trees:
-            print(f"Дерево Γ({L}) не построено")
-            return
-        
-        root = self.trees[L]
-        print(f"\n=== Дерево Γ({L}), глубина {2**L} ===")
-        
-        # Рекурсивная функция обхода
-        def dfs(node, depth, path, is_left=None):
-            if depth > max_depth:
-                return []
-            
-            # Метка узла
-            label = node.content.get('label', '?') if node.content else '?'
-            
-            # Формируем строку для текущего узла
-            lines = []
-            
-            if depth == 0:
-                # Корень
-                lines.append(f"[{label}]")
-            else:
-                # Определяем тип ребра
-                edge_char = '0\\' if is_left else '1/'
-                indent = ' ' * (4 * (depth - 1))
-                lines.append(f"{indent}{edge_char}[{label}]")
-            
-            # Рекурсивно обходим детей
-            # Сначала правый потомок (чтобы визуализация была симметричной)
-            if '1' in node.pointers and node.pointers['1']:
-                child_lines = dfs(node.pointers['1'], depth + 1, path + '1', is_left=False)
-                lines.extend(child_lines)
-            
-            # Затем левый потомок
-            if '0' in node.pointers and node.pointers['0']:
-                child_lines = dfs(node.pointers['0'], depth + 1, path + '0', is_left=True)
-                lines.extend(child_lines)
-            
-            return lines
-        
-        tree_lines = dfs(root, 0, '')
-        
-        for line in tree_lines:
-            print(line)
-        
-        
-        print("\nПримеры путей:")
-        self.print_sample_paths(root, L)
-        
-    def print_sample_paths(self, root, L, max_examples=256):
-        """Показать несколько примеров путей и их выходов"""
-        from itertools import product
-        
-        # Типа пути длины <=8
-        depth = min(8, 2**L)
-        paths = list(product([0, 1], repeat=depth))
-        
-        print(f"Пути длины {depth}:")
-        for path in paths[:max_examples]:
-            current = root
-            path_str = ''.join(str(b) for b in path)
-            
-            try:
-                for bit in path:
-                    bit_str = str(bit)
-                    if bit_str in current.pointers:
-                        current = current.pointers[bit_str]
-                    else:
-                        break
-                
-                label = current.content.get('label', '?') if current.content else '?'
-                print(f"  {path_str} -> [{label}]")
-            except:
-                print(f"  {path_str} -> ошибка")
+        return 'output' 
 
     def process_output_mode(self, t: int) -> int:
-        """
-        Обработка в режиме вывода.
-        Берем маршрут длины 2^{L-1} и идём по дереву Γ(L-1).
-        """
         L = self.current_L
         route_length = 2**L
-        
-        
         if len(self.input_buffer) < route_length:
             return 0
-        
         route = self.input_buffer[-route_length:]
-        
-        if L not in self.trees:
-            return 0
-        
+        if L not in self.trees: return 0
         current = self.trees[L]
-        
         for bit in route:
             bit_str = str(bit)
-            
-            if bit_str not in current.pointers:
-                return 0
-            
-            next_cell = current.pointers[bit_str]
-            
-            if next_cell is None:
-                return 0
-            
-            current = next_cell
+            if bit_str not in current.pointers: return 0
+            current = current.pointers[bit_str]
+            if current is None: return 0
             self.operations += 1
             self.stats['traversals'] += 1
-        if current.content is None:
-            print("No leaf")
         return current.content.get('label', 0) if current.content else 0
-    
+        
     def process_construction_mode(self, t: int):
-        """
-        Обработка в режиме построения.
-        Строим дерево Γ(current_L).
-        """
         if self.current_L not in self.trees:
-            print(f"Строим Γ({self.current_L}) в режиме construction...")
             self.build_tree_Gamma(self.current_L)
-    
+            
     def get_statistics(self) -> dict:
-        """Получить статистику работы машины"""
         return {
-            'total_operations': self.operations,
             'nodes_created': self.stats['nodes_created'],
-            'edges_created': self.stats['edges_created'],
             'traversals': self.stats['traversals'],
             'current_L': self.current_L,
-            'tree_depth': 2**self.current_L if self.current_L in self.trees else 0,
-            'memory_cells': len(self.memory.cells)
         }
+
+def test_xor_logic():
+    machine = KolmogorovUspenskyMachine()
     
 
-def test_basic():
-    """Тест базовой функциональности"""
-    machine = KolmogorovUspenskyMachine()
-    machine.init_parameters()
-    
-    print("Тест: строим Γ(0) и Γ(1)")
     machine.build_tree_Gamma(0)
-    stats = machine.get_statistics()
-    print(f"После Γ(0): {stats}")
     machine.visualize_tree(0)
-    
+   
     machine.build_tree_Gamma(1)
-    stats = machine.get_statistics()
-    print(f"После Γ(1): {stats}")
     machine.visualize_tree(1)
+    
+
+    machine.input_buffer = [0, 1]
+    res = machine.process_output_mode(2)
+    print(f"Путь 01 (Ожидается 1): {res} {'OK' if res==1 else 'FAIL'}")
+
+
+    machine.input_buffer = [1, 1]
+    res = machine.process_output_mode(2)
+    print(f"Путь 11 (Ожидается 0): {res} {'OK' if res==0 else 'FAIL'}")
 
     machine.build_tree_Gamma(2)
-    stats = machine.get_statistics()
-    print(f"После Γ(2): {stats}")
     machine.visualize_tree(2)
-
+    
     machine.build_tree_Gamma(3)
-    stats = machine.get_statistics()
-    print(f"После Γ(3): {stats}")
-    machine.visualize_tree(3)
-    
+    #machine.visualize_tree(3)
 
-    tests4 = [[0,0,0,0],
-             [0,0,0,1],
-             [0,0,1,0],
-             [0,0,1,1],
-             [0,1,0,0],
-             [0,1,0,1],
-             [0,1,1,0],
-             [0,1,1,1],
-             [1,0,0,0],
-             [1,0,0,1],
-             [1,0,1,0],
-             [1,0,1,1],
-             [1,1,0,0],
-             [1,1,0,1],
-             [1,1,1,0],
-             [1,1,1,1]]
-    
-    tests8 = [[0,0,0,0,0,0,0,1],
-             [0,0,1,0,0,0,1,0],
-             [0,1,0,0,0,1,0,1],
-             [0,1,1,0,0,1,1,1],
-             [1,0,0,0,1,0,0,1],
-             [1,0,1,0,1,0,1,1],
-             [1,1,0,0,1,1,0,1],
-             [1,1,1,0,1,1,1,1]]
-    # Тест обхода
-    print("\nТест обхода:")
-    machine.current_L = 3
-    for test in tests8:
-        machine.input_buffer = test 
-        output = machine.process_output_mode(len(machine.input_buffer))
-        print(f"Маршрут {machine.input_buffer} -> выход: {output}")
-    
-    return machine
-
+    test_path = [1, 0, 1, 1, 0, 0, 1, 1] 
+    expected = 1 ^ 0 ^ 1 ^ 1 ^ 0 ^ 0 ^ 1 ^ 1 # = 1
+    machine.input_buffer = test_path
+    res = machine.process_output_mode(4)
+    print(f"Путь {test_path} (Ожидается {expected}): {res} {'OK' if res==expected else 'FAIL'}")
 
 if __name__ == "__main__":
-    '''m = KolmogorovUspenskyMachine()
-    m.init_parameters()
-    
-    # Тестируем глубину
-    m.build_tree_Gamma(0) # Глубина 1
-    m.visualize_tree(0)
-    
-    m.build_tree_Gamma(1) # Глубина 2 (1 + 1)
-    m.visualize_tree(1)
-
-    m.build_tree_Gamma(2) # Глубина 2 (1 + 1)
-    m.visualize_tree(2)'''
-    test_basic()
+    test_xor_logic()
