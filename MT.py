@@ -1,114 +1,139 @@
-import math
-
 class RealTimeTuringMachine:
-    """
-    Эмуляция Машины Тьюринга для вычисления Предиката Григорьева.
-    Акцент сделан на подсчете механических шагов (Cost).
-    """
     def __init__(self):
-        
-        self.tape = [] 
-        self.head_position = -1
-        self.current_xor = 0
-        
-        
-        self.L = 0
-        self.window_size = 0 
-        
-        
-        self.total_steps = 0
-    
-    def set_L(self, L):
-        self.L = L
-        self.window_size = 2**L
-        
         self.tape = []
         self.head_position = -1
         self.current_xor = 0
-        self.total_steps = 0
-        print(f"\n--- МТ переключена на уровень L={L} (Окно N={self.window_size}) ---")
+        self.L = 0
+        self.window_size = 0
+        self.bit_index = 0
 
-    def process_bit(self, bit: int) -> dict:
-        """
-        Принимает бит, обновляет состояние, возвращает стоимость операции.
-        """
-        
+    def set_L(self, L):
+        self.L = L
+        self.window_size = 2 ** L
+        self.tape = []
+        self.head_position = -1
+        self.current_xor = 0
+        self.bit_index = 0
+
+        print(f"\n{'=' * 60}")
+        print(f"{' УРОВЕНЬ L=' + str(L) + ' | РАЗМЕР ОКНА N=' + str(self.window_size) + ' ':^60}")
+        print(f"{'=' * 60}")
+        print("Вводи биты (0 или 1). Для выхода на выбор L введи 'q'.\n")
+
+    def _print_tape(self, highlight_window=True, leaving_bit_pos=None):
+        if not self.tape:
+            print("Лента: <пусто>")
+            return
+
+        tape_parts = []
+        for i, bit in enumerate(self.tape):
+            if highlight_window and len(self.tape) >= self.window_size:
+                start = len(self.tape) - self.window_size
+                if start <= i < len(self.tape):
+                    tape_parts.append(f"[{bit}]")
+                else:
+                    if leaving_bit_pos is not None and i == leaving_bit_pos:
+                        tape_parts.append(f"({bit})")  # вытесняемый
+                    else:
+                        tape_parts.append(f" {bit} ")
+            else:
+                tape_parts.append(f" {bit} ")
+
+        tape_str = "".join(tape_parts)
+        head_spaces = "   " * self.head_position
+        print(f"Лента: {tape_str}")
+        print(f"Голова:{head_spaces} ↑ (позиция {self.head_position})")
+
+    def process_bit(self, bit: int):
+        self.bit_index += 1
+        idx = self.bit_index - 1
+
+        print(f"\n{'-' * 50}")
+        print(f"Обработка бита {idx} | Ввод: {bit}")
+        print(f"{'-' * 50}")
+
+        # Запись бита и сдвиг головы
         self.tape.append(bit)
         self.head_position += 1
-        steps_this_cycle = 1 
-        
-        output = 0
-        
-        
-        if len(self.tape) >= self.window_size:
-            
-            
-            target_index = self.head_position - self.window_size
-            
-            
-            
-            
-            distance = self.head_position - target_index 
-            steps_this_cycle += distance
-            
-            
-            x_leaving = self.tape[target_index]
-            steps_this_cycle += 1 
-            
-            
-            
-            steps_this_cycle += distance
-            
+        steps = 1
 
-            if len(self.tape) == self.window_size:
-                
-                val = 0
-                for b in self.tape: val ^= b
-                self.current_xor = val
-            else:
-                
-                self.current_xor = self.current_xor ^ x_leaving ^ bit
-            
-            output = self.current_xor
-            
-        else:
-            
-            output = 0 
+        if len(self.tape) < self.window_size:
             self.current_xor ^= bit
-            
-        self.total_steps += steps_this_cycle
-        
-        return {
-            'input': bit,
-            'output': output,
-            'steps': steps_this_cycle,
-            'window': self.window_size,
-            'is_real_time': steps_this_cycle <= 10 
-        }
+            print("Состояние: окно заполняется")
+            self._print_tape(highlight_window=False)
+            print(f"Прогресс: {len(self.tape)}/{self.window_size} | Шаги: {steps} | Вывод: 0")
+            return
 
-def compare_machines():
+        if len(self.tape) == self.window_size:
+            print("СОБЫТИЕ: Окно полностью заполнено!")
+            self._print_tape()
+            print(f"Текущий XOR окна: {self.current_xor}")
+            print(f"Шаги: {steps} | Вывод: {self.current_xor}")
+            return
+
+        # Скользящее окно
+        leaving_pos = self.head_position - self.window_size
+        leaving_bit = self.tape[leaving_pos]
+        distance = self.window_size
+        steps += distance + 1 + distance
+
+        # Пошаговый XOR
+        old_xor = self.current_xor
+        after_leaving = old_xor ^ leaving_bit
+        new_xor = after_leaving ^ bit
+
+        print(f"Нужно обновить XOR: вытесняется бит на позиции {leaving_pos}")
+        self._print_tape(leaving_bit_pos=leaving_pos)
+
+        print(f"\nОбновление XOR поэтапно:")
+        print(f"   Старый XOR       : {old_xor}   (из предыдущего окна)")
+        print(f" ⊕ Вытесняемый бит  : {leaving_bit}   (позиция {leaving_pos}, уходит из окна)")
+        print(f"   =                {after_leaving}")
+        print(f" ⊕ Новый бит        : {bit}   (только что записан)")
+        print(f"   = Новый XOR      : {new_xor}")
+
+        self.current_xor = new_xor
+
+        is_real_time = steps <= 10
+        status = "OK (real-time) ✅" if is_real_time else "FAIL (не real-time) ❌"
+
+        print(f"\nШаги на этом бите: {steps} (1 запись + 2×{distance} перемещений + 1 чтение)")
+        print(f"Вывод (XOR окна): {self.current_xor} | Статус: {status}")
+
+
+# Интерактивный режим
+def interactive_mode():
     tm = RealTimeTuringMachine()
-    
-    
-    for L in [1, 2, 3, 5, 10]:
-        tm.set_L(L)
 
-        N = 2**L
-        inputs = [1] * (N + 2) 
-        
-        print(f"{'Input Bit':<10} | {'TM Steps (Cost)':<15} | {'KUM Steps':<10} | {'Status'}")
-        print("-" * 55)
-        
-        for i, bit in enumerate(inputs):
-            res = tm.process_bit(bit)
-            
-            
-            kum_steps = 1 
-            
-            
-            if i >= N - 1:
-                status = "FAIL ❌" if not res['is_real_time'] else "OK ✅"
-                print(f"{i:<10} | {res['steps']:<15} | {kum_steps:<10} | {status}")
+    while True:
+        try:
+            L_input = input("\nВведи уровень L (1–10) или 'q' для выхода: ").strip()
+            if L_input.lower() in ['q', 'quit', 'exit']:
+                print("До свидания!")
+                break
+            L = int(L_input)
+            if L < 0 or L > 15:
+                print("Рекомендую L от 1 до 10")
+                continue
+            tm.set_L(L)
+
+            while True:
+                user_input = input("> ").strip()
+                if user_input.lower() in ['q', 'quit', 'exit', '']:
+                    print("Возвращаемся к выбору уровня...\n")
+                    break
+                if user_input not in ['0', '1']:
+                    print("Только 0 или 1!")
+                    continue
+                tm.process_bit(int(user_input))
+
+        except ValueError:
+            print("Введи число!")
+        except KeyboardInterrupt:
+            print("\nВыход.")
+            break
+
 
 if __name__ == "__main__":
-    compare_machines()
+    print("=== Машина Тьюринга === ")
+    interactive_mode()
