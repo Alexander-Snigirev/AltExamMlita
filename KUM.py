@@ -43,25 +43,55 @@ class KolmogorovUspenskyMachine:
                         q.append(child)
         return leaves
 
-    def copy_subtree(self, node: MemoryCell, xor_mask: int = 0, prefix: str = '') -> MemoryCell:
-        """Копирование поддерева с применением XOR к метке"""
-        if node is None: return None
-
-        content = node.content.copy() if node.content else {}
-        if 'label' in content:
-            content['label'] ^= xor_mask
-        content['path_key'] = prefix 
-            
-        new_node = self.memory.allocate(content=content)
-        self.stats['nodes_created'] += 1
+    def _find_nodes_at_depth(self, root: MemoryCell, target_depth: int) -> List[Tuple[List[int], MemoryCell]]:
+        """
+        Находит все узлы на глубине target_depth и возвращает их 
+        вместе с путем (списком битов), который к ним привел.
+        """
+        results = []
         
-        for label, child in node.pointers.items():
-            if label not in ['S']: 
-                if child:
-                    new_child = self.copy_subtree(child, xor_mask=xor_mask, prefix=prefix + label)
-                    self.memory.add_pointer(new_node.address, label, new_child.address)
+        def traverse(node, current_path):
+            if len(current_path) == target_depth:
+                results.append((list(current_path), node))
+                return
+            
+            for bit in [0, 1]:
+                label = str(bit)
+                if label in node.pointers:
+                    child = node.pointers[label]
+                    current_path.append(bit)
+                    traverse(child, current_path)
+                    current_path.pop()
+                    
+        traverse(root, [])
+        return results
+
+    def copy_and_mask_subtree(self, source_node: MemoryCell, mask_path: List[int]) -> MemoryCell:
+        """
+        Реализует операцию Г ⊕ А (стр. 4 статьи).
+        Копирует дерево, инвертируя метки согласно маске пути А.
+        """
+        def build_masked(original, depth):
+            
+            current_mask_bit = mask_path[depth] if depth < len(mask_path) else 0
+            
+            original_label = original.content.get('label', 0)
+            new_label = original_label ^ current_mask_bit
+            
+            
+            new_node = self.memory.allocate(content={'label': new_label})
+            self.stats['nodes_created'] += 1
+            
+            for bit_str in ['0', '1']:
+                if bit_str in original.pointers:
+                    child = original.pointers[bit_str]
+                    new_child = build_masked(child, depth + 1)
+                    self.memory.add_pointer(new_node.address, bit_str, new_child.address)
                     self.stats['edges_created'] += 1
-        return new_node
+            
+            return new_node
+
+        return build_masked(source_node, 0)
     
     def _collect_all_nodes(self, node: MemoryCell, path_to_node: Dict[str, MemoryCell], current_path: str):
         """Сбор всех узлов для построения ссылок"""
@@ -92,37 +122,40 @@ class KolmogorovUspenskyMachine:
                 self.stats['edges_created'] += 1
 
     def build_tree_Gamma(self, L: int):
-        """Фаза Конструирования (Construction Phase)"""
+        """Индукционное построение по Григорьеву (стр. 5)"""
         if L == 0:
-            root = self.memory.allocate(content={'label': 0, 'L': 0, 'path_key': ''})
-            left = self.memory.allocate(content={'label': 0, 'type': 'leaf', 'path_key': '0'})
-            right = self.memory.allocate(content={'label': 1, 'type': 'leaf', 'path_key': '1'})
-            self.memory.add_pointer(root.address, '0', left.address)
-            self.memory.add_pointer(root.address, '1', right.address)
+            
+            root = self.memory.allocate(content={'label': 0, 'path_key': ''})
+            l0 = self.memory.allocate(content={'label': 0, 'path_key': '0'})
+            l1 = self.memory.allocate(content={'label': 1, 'path_key': '1'})
+            self.memory.add_pointer(root.address, '0', l0.address)
+            self.memory.add_pointer(root.address, '1', l1.address)
             self.trees[0] = root
             self.stats['nodes_created'] += 3
-            self.stats['edges_created'] += 2
         else:
             prev_L = L - 1
-            base_root = self.copy_subtree(self.trees[prev_L], xor_mask=0, prefix='')
-            leaves = self._collect_leaves(base_root)
-            template_tree = self.trees[prev_L]
+            prev_tree = self.trees[prev_L]
             
-            for leaf in leaves:
-                leaf_val = leaf.content.get('label', 0)
-                prefix = leaf.content.get('path_key', '')
-                extension_root = self.copy_subtree(template_tree, xor_mask=leaf_val, prefix=prefix)
-                for label, child_node in extension_root.pointers.items():
-                    if label not in ['S']:
-                        self.memory.add_pointer(leaf.address, label, child_node.address)
-                if leaf.content: leaf.content['type'] = 'node'
+            new_root = self.copy_and_mask_subtree(prev_tree, []) 
             
-            self.trees[L] = base_root
+            depth_to_reach = 2**prev_L
+            leaves_info = self._find_nodes_at_depth(new_root, depth_to_reach)
+            
+            for path_A, leaf_node in leaves_info:
+                
+                modified_subtree = self.copy_and_mask_subtree(prev_tree, path_A)
+                
+                
+                for bit_str in ['0', '1']:
+                    if bit_str in modified_subtree.pointers:
+                        target = modified_subtree.pointers[bit_str]
+                        self.memory.add_pointer(leaf_node.address, bit_str, target.address)
+            
+            self.trees[L] = new_root
 
         
         self._build_suffix_links(L, self.trees[L])
         self.current_L = L
-        
         self.current_path_node = None 
         return self.trees[L]
 
@@ -133,12 +166,10 @@ class KolmogorovUspenskyMachine:
         self.input_buffer.append(bit)
         L = self.current_L
         N = 2**L
-        
-        
+
         if len(self.input_buffer) < N:
             return 0, "Buffering", 1
 
-        
         if self.current_path_node is None:
             route = self.input_buffer[-N:]
             current = self.trees[L]
@@ -152,8 +183,6 @@ class KolmogorovUspenskyMachine:
             res = current.content.get('label', 0)
             return res, "Init (O(N))", cost
 
-        
-        
         suffix_node = self.current_path_node.pointers.get('S')
         if not suffix_node: return 0, "Error: S-link missing", 1
         
@@ -183,8 +212,7 @@ class KolmogorovUspenskyMachine:
             is_leaf = '0' not in node.pointers and '1' not in node.pointers
             color = "\033[92m" if is_leaf else "" 
             reset = "\033[0m"
-            
-            
+
             s_link = " (S→...)" if 'S' in node.pointers else ""
             
             print(f"{prefix}{connector}{edge_str}{color}{lbl_str}{s_link}{reset}")
