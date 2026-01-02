@@ -1,99 +1,104 @@
 import time
-
+import sys
 from KUM import KolmogorovUspenskyMachine
 
-
 class KUMInteractiveInterface:
-    DEMONSTRATION = True  
-    
     def __init__(self):
         self.machine = KolmogorovUspenskyMachine()
-        self.machine.demo_mode = self.DEMONSTRATION
         self.inputs_since_build = 0
+        self.base_cycle_multiplier = 2.0 
+
+    def print_header(self):
+        print("\n" + "="*65)
+        print("  KUM: СКОЛЬЗЯЩИЙ ПРЕДИКАТ ЧЕТНОСТИ (XOR)")
+        print("  Алгоритм с удвоением окна: N = 1 -> 2 -> 4 -> 8...")
+        print("="*65)
+        print("Инструкция:")
+        print("  0, 1 : Добавить бит")
+        print("  !    : Принудительно расширить память (L -> L+1)")
+        print("  #    : Выход")
+        print("-" * 65)
+
+    def print_state(self, bit, res, msg, cost):
+        L = self.machine.current_L
+        N = 2**L
         
-        self.phase_duration = 0 
+        full_buffer = self.machine.input_buffer
 
-    def print_system(self, msg: str):
-        print(f"\033[94m[СИСТЕМА]\033[0m {msg}")
+        if len(full_buffer) < N:
 
-    def print_kum(self, msg: str):
-        print(f"\033[93m[КУМ]\033[0m {msg}")
+            missing = N - len(full_buffer)
+            window_str = "." * missing + "".join(map(str, full_buffer))
+            
+            status_color = "\033[90m" 
+            xor_display = "-"
+            status_text = f"Buffering ({len(full_buffer)}/{N})"
+            
+        else:
+
+            window_bits = full_buffer[-N:]
+            window_str = "".join(map(str, window_bits))
+
+            res_color = "\033[92m" if res == 1 else "\033[96m"
+            xor_display = f"{res_color}{res}\033[0m"
+            status_color = "\033[93m"
+            status_text = msg
+        print(f" In: {bit} | Win(N={N}): \033[1m[{window_str}]\033[0m -> XOR: {xor_display:<5} | {status_color}{status_text}\033[0m")
 
     def run(self):
-        print("==================================================")
-        print("   ЭМУЛЯТОР МАШИНЫ КОЛМОГОРОВА-УСПЕНСКОГО (KUM)   ")
-        print("   Задача: Предикат Четности (XOR) в реальном времени")
-        print("==================================================")
-        print("Команды:")
-        print("  0, 1 : ввод битов")
-        print("  #      : выход")
-        print("==================================================\n")
+        self.print_header()
 
-        
-        self.build_phase(0)
-
+        print("Инициализация L=0...")
+        self.machine.build_tree_Gamma(0)
         
         while True:
             try:
-                user_input = input(f"\nВвод (L={self.machine.current_L}, N={2**self.machine.current_L}) > ").strip()
-            except EOFError:
+                N = 2**self.machine.current_L
+                prompt = f"\nL={self.machine.current_L} (Окно {N}) > "
+                user_input = input(prompt).strip()
+            except (EOFError, KeyboardInterrupt):
                 break
 
-            if user_input == '#':
-                self.print_system("Завершение работы.")
-                break
-            
-            
-            if not all(c in '01' for c in user_input):
-                self.print_system("Ошибка: вводите только 0 и 1.")
+            if not user_input: continue
+            if user_input == '#': break
+
+            if user_input == '!':
+                self.expand_memory()
                 continue
 
-            
             for char in user_input:
+                if char not in ['0', '1']:
+                    print(f" Пропущен символ: {char}")
+                    continue
+
                 bit = int(char)
-                res, msg, cost = self.machine.process_bit_step(bit)
                 
+                res, msg, cost = self.machine.process_bit_step(bit)
                 self.inputs_since_build += 1
                 
+                self.print_state(bit, res, msg, cost)
                 
-                output_str = f"Вход: {bit} | \033[1mXOR Окна: {res}\033[0m"
-                if self.DEMONSTRATION:
-                    cost_info = f"(Cost: {cost} ops - {msg})"
-                    print(f"{output_str:<30} {cost_info}")
-                else:
-                    print(output_str)
-
+                current_N = 2**self.machine.current_L
+                cycle_limit = int(current_N * self.base_cycle_multiplier) + 4
                 
-                
-                
-                cycle_len = 2**(self.machine.current_L + 1) + 2 
-                
-                if self.inputs_since_build >= cycle_len:
-                    self.print_kum("Цикл завершен. Начинается фаза расширения памяти...")
-                    self.print_system("Ввод приостановлен (Режим молчания).")
-                    time.sleep(1) 
-                    
-                    next_L = self.machine.current_L + 1
-                    self.build_phase(next_L)
+                if self.inputs_since_build >= cycle_limit:
+                    print(f"\n\033[90m[Лимит цикла {cycle_limit} достигнут. Расширение...]\033[0m")
+                    time.sleep(0.5)
+                    self.expand_memory()
                     break 
 
-    def build_phase(self, L: int):
-        """Фаза построения: Строит дерево, рисует, сбрасывает счетчики"""
-        start_time = time.time()
-        self.print_system(f"Построение дерева Γ({L})...")
+    def expand_memory(self):
+        """Переход к следующему уровню L"""
+        next_L = self.machine.current_L + 1
+        print(f"\n--- Перестройка Графа Памяти: L={next_L} (Окно N={2**next_L}) ---")
         
+        start = time.time()
+        self.machine.build_tree_Gamma(next_L)
+        dt = time.time() - start
         
-        self.machine.build_tree_Gamma(L)
-        
-        duration = time.time() - start_time
-        self.print_system(f"Построение завершено за {duration:.4f} сек.")
-        self.print_system(f"Затрачено операций (T_{L}): {self.machine.stats['edges_created']} (Экспоненциально!)")
-        
-        
-        self.machine.visualize_tree_ascii(L)
-        
+        print(f"Построено за {dt:.4f} сек. Узлов: {self.machine.stats['nodes_created']}")
+
         self.inputs_since_build = 0
-        self.print_system("Машина готова к работе в реальном времени.")
 
 
 if __name__ == "__main__":
