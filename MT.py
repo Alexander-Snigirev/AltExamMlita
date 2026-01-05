@@ -1,11 +1,12 @@
 class RealTimeTuringMachine:
-    def __init__(self):
+    def __init__(self, verbose=True):
         self.tape = []
         self.head_position = -1
         self.current_xor = 0
         self.L = 0
         self.window_size = 0
         self.bit_index = 0
+        self.verbose = verbose
 
     def set_L(self, L):
         self.L = L
@@ -15,12 +16,14 @@ class RealTimeTuringMachine:
         self.current_xor = 0
         self.bit_index = 0
 
-        print(f"\n{'=' * 60}")
-        print(f"{' УРОВЕНЬ L=' + str(L) + ' | РАЗМЕР ОКНА N=' + str(self.window_size) + ' ':^60}")
-        print(f"{'=' * 60}")
-        print("Вводи биты (0 или 1). Для выхода на выбор L введи 'q'.\n")
+        if self.verbose:
+            print(f"\n{'=' * 60}")
+            print(f"{' УРОВЕНЬ L=' + str(L) + ' | РАЗМЕР ОКНА N=' + str(self.window_size) + ' ':^60}")
+            print(f"{'=' * 60}")
+            print("Вводи биты (0 или 1). Для выхода на выбор L введи 'q'.\n")
 
     def _print_tape(self, highlight_window=True, leaving_bit_pos=None):
+        if not self.verbose: return
         if not self.tape:
             print("Лента: <пусто>")
             return
@@ -33,7 +36,7 @@ class RealTimeTuringMachine:
                     tape_parts.append(f"[{bit}]")
                 else:
                     if leaving_bit_pos is not None and i == leaving_bit_pos:
-                        tape_parts.append(f"({bit})")  # вытесняемый
+                        tape_parts.append(f"({bit})")
                     else:
                         tape_parts.append(f" {bit} ")
             else:
@@ -44,62 +47,75 @@ class RealTimeTuringMachine:
         print(f"Лента: {tape_str}")
         print(f"Голова:{head_spaces} ↑ (позиция {self.head_position})")
 
+    def process(self, bit: int):
+        return self.process_bit(bit)
+
+    def steps_per_bit(self, bit_index: int) -> int:
+        if bit_index <= self.window_size:
+            return 1 if bit_index < self.window_size else 2
+        else:
+            distance = self.window_size
+            return 1 + 2 * distance + 1
+
     def process_bit(self, bit: int):
         self.bit_index += 1
         idx = self.bit_index - 1
 
-        print(f"\n{'-' * 50}")
-        print(f"Обработка бита {idx} | Ввод: {bit}")
-        print(f"{'-' * 50}")
+        if self.verbose:
+            print(f"\n{'-' * 50}")
+            print(f"Обработка бита {idx} | Ввод: {bit}")
+            print(f"{'-' * 50}")
 
         self.tape.append(bit)
         self.head_position += 1
         steps = 1
 
+        # 1. Окно заполняется
         if len(self.tape) < self.window_size:
             self.current_xor ^= bit
-            print("Состояние: окно заполняется")
-            self._print_tape(highlight_window=False)
-            print(f"Прогресс: {len(self.tape)}/{self.window_size} | Шаги: {steps} | Вывод: 0")
-            return
+            if self.verbose:
+                print("Состояние: окно заполняется")
+                self._print_tape(highlight_window=False)
+                print(f"Прогресс: {len(self.tape)}/{self.window_size} | Шаги: {steps} | Вывод: 0")
+            return 0 # Возвращаем 0, пока окно не полно
 
+        # 2. Окно заполнилось
         if len(self.tape) == self.window_size:
-            print("СОБЫТИЕ: Окно полностью заполнено!")
-            final_xor = self.current_xor ^ bit
-            self.current_xor = final_xor
+            self.current_xor ^= bit
+            if self.verbose:
+                print("СОБЫТИЕ: Окно полностью заполнено!")
+                self._print_tape()
+                print(f"Текущий XOR окна: {self.current_xor}")
+                print(f"Шаги: {steps} | Вывод: {self.current_xor}")
+            return self.current_xor
 
-            self._print_tape()
-            print(f"Текущий XOR окна: {final_xor}")
-            print(f"Шаги: {steps} | Вывод: {final_xor}")
-            return
-
-        # Скользящее окно
+        # 3. Скользящее окно
         leaving_pos = self.head_position - self.window_size
         leaving_bit = self.tape[leaving_pos]
         distance = self.window_size
         steps += distance + 1 + distance
 
-        # Пошаговый XOR
         old_xor = self.current_xor
         after_leaving = old_xor ^ leaving_bit
         new_xor = after_leaving ^ bit
 
-        print(f"Нужно обновить XOR: вытесняется бит на позиции {leaving_pos}")
-        self._print_tape(leaving_bit_pos=leaving_pos)
-
-        print(f"\nОбновление XOR поэтапно:")
-        print(f"   Старый XOR       : {old_xor}   (из предыдущего окна)")
-        print(f" ⊕ Вытесняемый бит  : {leaving_bit}   (позиция {leaving_pos}, уходит из окна)")
-        print(f"   =                {after_leaving}")
-        print(f" ⊕ Новый бит        : {bit}   (только что записан)")
-        print(f"   = Новый XOR      : {new_xor}")
+        if self.verbose:
+            print(f"Нужно обновить XOR: вытесняется бит на позиции {leaving_pos}")
+            self._print_tape(leaving_bit_pos=leaving_pos)
+            print(f"\nОбновление XOR поэтапно:")
+            print(f"   Старый XOR       : {old_xor}")
+            print(f" ⊕ Вытесняемый бит  : {leaving_bit}")
+            print(f"   =                {after_leaving}")
+            print(f" ⊕ Новый бит        : {bit}")
+            print(f"   = Новый XOR      : {new_xor}")
 
         self.current_xor = new_xor
+        return self.current_xor
 
 
 # Интерактивный режим
 def interactive_mode():
-    tm = RealTimeTuringMachine()
+    tm = RealTimeTuringMachine(verbose=True)
 
     while True:
         try:
