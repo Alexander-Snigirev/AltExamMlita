@@ -4,69 +4,7 @@ import matplotlib.pyplot as plt
 import sys
 from typing import List
 from KUM import KolmogorovUspenskyMachine
-
-class RealTimeTuringMachine:
-    def __init__(self):
-        self.tape = []
-        self.head_position = -1
-        self.current_xor = 0
-        self.L = 0
-        self.window_size = 0
-        self.bit_index = 0
-
-    def set_L(self, L):
-        self.L = L
-        self.window_size = 2 ** L
-        self.tape = []
-        self.head_position = -1
-        self.current_xor = 0
-        self.bit_index = 0
-
-    def process_bit(self, bit: int):
-        self.bit_index += 1
-
-        self.tape.append(bit)
-        self.head_position += 1
-        steps = 1
-
-        if len(self.tape) < self.window_size:
-            self.current_xor ^= bit
-            return 0
-
-        if len(self.tape) == self.window_size:
-            final_xor = self.current_xor ^ bit
-            self.current_xor = final_xor
-            return final_xor
-
-        leaving_pos = self.head_position - self.window_size
-        leaving_bit = self.tape[leaving_pos]
-        distance = self.window_size
-        steps += distance + 1 + distance
-
-        old_xor = self.current_xor
-        after_leaving = old_xor ^ leaving_bit
-        new_xor = after_leaving ^ bit
-
-        self.current_xor = new_xor
-        return new_xor
-
-    def process(self, bit: int):
-        self.process_bit(bit)
-        return self.current_xor
-
-    def steps_per_bit(self, bit_index: int) -> int:
-        if bit_index <= self.window_size:
-            return 1 if bit_index < self.window_size else 2
-        else:
-            distance = self.window_size
-            return 1 + 2 * distance + 1
-
-    def reset_for_benchmark(self):
-        self.tape = []
-        self.head_position = -1
-        self.current_xor = 0
-        self.bit_index = 0
-
+from MT import RealTimeTuringMachine
 
 def run_benchmark(num_bits: int = 500, max_L: int = 4):
     random.seed(42)
@@ -77,7 +15,7 @@ def run_benchmark(num_bits: int = 500, max_L: int = 4):
     print(f"{'=' * 80}")
     print(
         f"{'L':<4} {'N':<8} {'Время стр. (с)':<18} {'Узлы':<12} {'Оп. KUM (на бит)':<20} {'Шаги МТ (на бит)':<20}")
-    print("-" * 80)
+    print("-" * 95)
 
     L_values = list(range(max_L + 1))
     build_times = []
@@ -109,8 +47,10 @@ def run_benchmark(num_bits: int = 500, max_L: int = 4):
             kum_ops_total += cost
 
         tm = RealTimeTuringMachine()
+        # В MT.py метод set_L выводит много текста в консоль
         tm.set_L(L)
-        tm_results = [tm.process(bit) for bit in bits]
+        tm_results = [tm.process_bit(bit) for bit in bits]  # В MT.py метод называется process_bit
+
         real_time_bits = max(1, num_bits - N)
         avg_kum = kum_ops_total / real_time_bits
         avg_tm = sum(tm.steps_per_bit(i + 1) for i in range(num_bits)) / real_time_bits
@@ -122,7 +62,6 @@ def run_benchmark(num_bits: int = 500, max_L: int = 4):
         nodes_list.append(kum.stats['nodes_created'])
         kum_ops_avg.append(avg_kum)
         tm_steps_avg.append(avg_tm)
-
     plt.figure(figsize=(12, 5))
 
     plt.subplot(1, 2, 1)
@@ -152,7 +91,7 @@ def run_benchmark(num_bits: int = 500, max_L: int = 4):
     plt.show()
 
 def interactive_compare():
-    tm = RealTimeTuringMachine()
+    tm = RealTimeTuringMachine(verbose=False)
     kum = KolmogorovUspenskyMachine()
     kum.demo_mode = False
 
